@@ -6,7 +6,7 @@
 # NO necesitas definirlos aquí.
 # =================================================================
 
-FROM runpod/worker-v1-vllm:latest
+FROM runpod/worker-v1-vllm:v2.22.4
 
 # 1. Instalar huggingface_hub ANTES de descargar
 RUN pip install -q "huggingface_hub[cli]"

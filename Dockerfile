@@ -22,10 +22,9 @@ snapshot_download( \
 COPY vllm-compile-cache.tar.gz /tmp/
 
 RUN mkdir -p /vllm-cache/compile \
-    && tar -xzf /tmp/vllm-compile-cache.tar.gz -C /vllm-cache/compile \
+    && tar -xzf /tmp/vllm-compile-cache.tar.gz -C /root/.cache \
     && rm -f /tmp/vllm-compile-cache.tar.gz
 
-COPY vllm-cache/compile/ /root/.cache/vllm/
 
 
 # 4. Variables de entorno

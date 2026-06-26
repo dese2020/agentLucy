@@ -25,6 +25,9 @@ RUN mkdir -p /vllm-cache/compile \
     && tar -xzf /tmp/vllm-compile-cache.tar.gz -C /vllm-cache/compile \
     && rm -f /tmp/vllm-compile-cache.tar.gz
 
+COPY vllm-cache/compile/ /root/.cache/vllm/
+
+
 # 4. Variables de entorno
 ENV MODEL_NAME="/models/qwen3.5-9b"
 ENV SERVED_MODEL_NAME="ndimensional/qwen3.5-9b-uncensored-safetensors"
@@ -34,7 +37,4 @@ ENV MAX_MODEL_LEN="4096"
 ENV GPU_MEMORY_UTILIZATION="0.9"
 ENV DTYPE="bfloat16"
 ENV MAX_NUM_SEQS="256"
-
-# Apuntar vLLM al cache horneado
-ENV VLLM_CACHE_ROOT="/vllm-cache"
-ENV VLLM_COMPILE_CACHE_DIR="/vllm-cache/compile"
+ENV VLLM_CACHE_ROOT="/root/.cache/vllm"

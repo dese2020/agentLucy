@@ -20,13 +20,10 @@ snapshot_download( \
 
 # 3. Copiar y descomprimir cache de compilación
 # Debe existir vllm-compile-cache.tar.gz junto al Dockerfile
-#COPY vllm-compile-cache.tar.gz /tmp/
-#
-#RUN mkdir -p /vllm-cache/compile \
-#    && tar -xzf /tmp/vllm-compile-cache.tar.gz -C /root/.cache \
-#    && rm -f /tmp/vllm-compile-cache.tar.gz
-
-
+COPY vllm-compile-cache.tar.gz /tmp/
+RUN mkdir -p /vllm-cache/compile \
+    && tar -xzf /tmp/vllm-compile-cache.tar.gz -C /root/.cache \
+    && rm -f /tmp/vllm-compile-cache.tar.gz
 
 # 4. Variables de entorno
 ENV MODEL_NAME="/models/qwen3.5-4b"

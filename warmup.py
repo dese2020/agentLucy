@@ -40,13 +40,13 @@ if __name__ == '__main__':
 
     print("\n==> Cargando modelo y compilando Inductor (~2-3 min)...")
     llm = LLM(
-        model="/models/qwen3.5-9b",
+        model="/models/qwen3.5-4b",
         dtype="bfloat16",
         max_model_len=4096,
         gpu_memory_utilization=0.9,
         kv_cache_dtype="fp8",
         enforce_eager=False,
-        max_num_seqs=64,
+        max_num_seqs=256,
     )
 
     print("==> Warmup con prompts...")

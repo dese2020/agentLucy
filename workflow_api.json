@@ -1,0 +1,39 @@
+{
+  "61": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen/qwen3.5_4b_bf16.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    }
+  },
+  "31": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": ""
+    }
+  },
+  "68": {
+    "class_type": "TextGenerate",
+    "inputs": {
+      "clip": ["61", 0],
+      "prompt": ["31", 0],
+      "max_new_tokens": 512,
+      "seed_control_mode": "on",
+      "temperature": 0.7,
+      "top_k": 64,
+      "top_p": 0.95,
+      "min_p": 0.05,
+      "repetition_penalty": 1.05,
+      "seed": 0,
+      "extra_0": 0,
+      "extra_1": false
+    }
+  },
+  "11": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": ["68", 0]
+    }
+  }
+}

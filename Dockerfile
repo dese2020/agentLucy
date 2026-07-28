@@ -13,7 +13,7 @@ WORKDIR ${COMFYUI_PATH}
 # ---------------------------------------------------------------------------
 # Herramientas para descargar de HuggingFace (hf CLI moderno + acelerador)
 # ---------------------------------------------------------------------------
-RUN pip install --no-cache-dir -U "huggingface_hub[cli]" hf_transfer runpod
+RUN pip install --no-cache-dir -U "huggingface_hub[cli]" hf_transfer runpod --ignore-installed
 
 # ---------------------------------------------------------------------------
 # NO hace falta custom node: el workflow usa los nodos nativos de ComfyUI

@@ -36,7 +36,6 @@ ENV TEXT_ENCODERS_DIR=${COMFYUI_PATH}/models/text_encoders/qwen
 RUN mkdir -p ${TEXT_ENCODERS_DIR} && \
     hf download ${MODEL_REPO} ${MODEL_FILE} \
         --local-dir /tmp/qwen_dl \
-        --local-dir-use-symlinks False && \
     mv /tmp/qwen_dl/${MODEL_FILE} ${TEXT_ENCODERS_DIR}/qwen3.5_4b_bf16.safetensors && \
     rm -rf /tmp/qwen_dl
 

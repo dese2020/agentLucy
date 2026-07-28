@@ -29,7 +29,7 @@ import runpod
 COMFY_HOST = "127.0.0.1"
 COMFY_PORT = 8188
 COMFY_URL = f"http://{COMFY_HOST}:{COMFY_PORT}"
-COMFYUI_PATH = os.environ.get("COMFYUI_PATH", "/workspace/ComfyUI")
+COMFYUI_PATH = os.environ.get("COMFYUI_PATH", "/opt/ComfyUI")
 WORKFLOW_PATH = os.path.join(COMFYUI_PATH, "workflow_api.json")
 
 # IDs de los nodos dentro del workflow_api.json, tomados de tu grafo real

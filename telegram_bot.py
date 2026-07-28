@@ -14,7 +14,7 @@ Variables de entorno necesarias:
 import asyncio
 import logging
 import os
-
+from dotenv import load_dotenv
 import requests
 from telegram import Update
 from telegram.constants import ChatAction
@@ -25,7 +25,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
+load_dotenv()
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,

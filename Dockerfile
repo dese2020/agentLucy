@@ -25,8 +25,8 @@ WORKDIR ${COMFYUI_PATH}
 # La imagen base ya trae torch compilado para Blackwell/CUDA 13. No lo
 # reinstalamos: filtramos la línea de torch del requirements.txt de ComfyUI
 # antes de instalar el resto de dependencias, para no romper esa build.
-RUN grep -v -i '^torch' requirements.txt > requirements.filtered.txt && \
-    pip install --no-cache-dir -r requirements.filtered.txt
+#RUN grep -v -i '^torch' requirements.txt > requirements.filtered.txt && \
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ---------------------------------------------------------------------------
 # Herramientas para descargar de HuggingFace (hf CLI moderno + acelerador)

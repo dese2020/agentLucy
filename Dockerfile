@@ -35,6 +35,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir -U "huggingface_hub[cli]" hf_transfer runpod --ignore-installed
 
 # ---------------------------------------------------------------------------
+# Workflow-to-API converter: agrega el endpoint /workflow/convert, que
+# convierte un workflow en formato UI (el que exporta ComfyUI con "Save",
+# no "Save (API)") al formato API real, usando la misma lógica que el
+# botón "Save (API)" del frontend. Lo usamos para generar el
+# workflow_api.json definitivo sin adivinar el formato de inputs raros
+# como COMFY_DYNAMICCOMBO_V3 (sampling_mode de TextGenerate).
+# https://github.com/SethRobinson/comfyui-workflow-to-api-converter-endpoint
+# ---------------------------------------------------------------------------
+RUN cd ${COMFYUI_PATH}/custom_nodes && \
+    git clone --depth 1 https://github.com/SethRobinson/comfyui-workflow-to-api-converter-endpoint.git
+
+COPY ui_workflow_source.json ${COMFYUI_PATH}/ui_workflow_source.json
+
+# ---------------------------------------------------------------------------
 # NO hace falta custom node: el workflow usa los nodos nativos de ComfyUI
 # CLIPLoader + TextGenerate (comfy-core >= 0.19). Verificar que la versión
 # clonada de ComfyUI ya incluya estos nodos (deberían estar en cualquier

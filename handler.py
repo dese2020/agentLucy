@@ -6,8 +6,17 @@ Input esperado (job["input"]):
 {
     "prompt": "texto del usuario",
     "system_prompt": "opcional",
-    "max_tokens": 512,           # opcional
-    "temperature": 0.8,          # opcional
+    "max_length": 1024,          # opcional
+    "sampling_mode": "on",       # opcional ("on", "off")
+    "thinking": false,           # opcional
+    "use_default_template": true,# opcional
+    "temperature": 0.7,          # opcional
+    "top_k": 64,                 # opcional
+    "top_p": 0.95,               # opcional
+    "min_p": 0.05,               # opcional
+    "repetition_penalty": 1.05,  # opcional
+    "presence_penalty": 0.0,     # opcional
+    "seed": 0,                   # opcional
     "workflow_overrides": {...}  # opcional: para pisar nodos puntuales
 }
 
@@ -32,14 +41,7 @@ COMFY_URL = f"http://{COMFY_HOST}:{COMFY_PORT}"
 COMFYUI_PATH = os.environ.get("COMFYUI_PATH", "/opt/ComfyUI")
 WORKFLOW_PATH = os.path.join(COMFYUI_PATH, "workflow_api.json")
 
-# IDs de los nodos dentro del workflow_api.json, tomados de tu grafo real
-# (ep38_local_llm_text_generate.json), rama de solo texto:
-#   61 = CLIPLoader (carga el modelo)
-#   31 = PrimitiveStringMultiline (prompt del usuario)
-#   68 = TextGenerate (genera el texto)
-#   11 = PreviewAny (nodo de salida que aparece en /history)
-# Si volvés a exportar el workflow desde ComfyUI, verificá que estos IDs
-# no hayan cambiado.
+# IDs de los nodos dentro del workflow_api.json:
 NODE_ID_USER_PROMPT = "31"
 NODE_ID_MODEL_LOADER = "61"
 NODE_ID_SAMPLER_OPTS = "68"
@@ -88,27 +90,32 @@ def _build_prompt(job_input):
 
     prompt_text = job_input.get("prompt", "")
     system_prompt = job_input.get("system_prompt", "")
-    max_tokens = job_input.get("max_tokens", 512)
-    temperature = job_input.get("temperature", 0.8)
 
-    # Este workflow no tiene un nodo de system prompt separado (el modelo de
-    # DavidAU "no necesita system prompt" según su model card). Si querés uno,
-    # lo simple es concatenarlo delante del prompt del usuario.
+    # Concatenar el system_prompt si está presente
     full_prompt = f"{system_prompt}\n\n{prompt_text}" if system_prompt else prompt_text
 
+    # 1. Configurar nodo de Prompt
     if NODE_ID_USER_PROMPT in wf:
-        # OJO: "value" es un supuesto -- confirmá el nombre real del widget
-        # de PrimitiveStringMultiline exportando el workflow con
-        # Workflow > Export (API) y mirando la clave dentro de "inputs".
         wf[NODE_ID_USER_PROMPT]["inputs"]["value"] = full_prompt
-    if NODE_ID_SAMPLER_OPTS in wf:
-        # Ídem: "max_new_tokens"/"temperature" son los nombres más probables
-        # para los widgets de TextGenerate, pero confirmalos contra el
-        # workflow_api.json real antes de confiar en esto en producción.
-        wf[NODE_ID_SAMPLER_OPTS]["inputs"]["max_new_tokens"] = max_tokens
-        wf[NODE_ID_SAMPLER_OPTS]["inputs"]["temperature"] = temperature
 
-    # Overrides manuales opcionales, por si querés pisar cualquier campo directo
+    # 2. Configurar todos los parámetros del nodo TextGenerate (68)
+    if NODE_ID_SAMPLER_OPTS in wf:
+        node_inputs = wf[NODE_ID_SAMPLER_OPTS]["inputs"]
+        
+        # Mapeo de parámetros con sus valores por defecto
+        node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 1024))
+        node_inputs["sampling_mode"] = job_input.get("sampling_mode", node_inputs.get("sampling_mode", "on"))
+        node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", False))
+        node_inputs["use_default_template"] = job_input.get("use_default_template", node_inputs.get("use_default_template", True))
+        node_inputs["temperature"] = job_input.get("temperature", node_inputs.get("temperature", 0.7))
+        node_inputs["top_k"] = job_input.get("top_k", node_inputs.get("top_k", 64))
+        node_inputs["top_p"] = job_input.get("top_p", node_inputs.get("top_p", 0.95))
+        node_inputs["min_p"] = job_input.get("min_p", node_inputs.get("min_p", 0.05))
+        node_inputs["repetition_penalty"] = job_input.get("repetition_penalty", node_inputs.get("repetition_penalty", 1.05))
+        node_inputs["presence_penalty"] = job_input.get("presence_penalty", node_inputs.get("presence_penalty", 0.0))
+        node_inputs["seed"] = job_input.get("seed", node_inputs.get("seed", 0))
+
+    # Overrides manuales opcionales
     for node_id, fields in job_input.get("workflow_overrides", {}).items():
         wf.setdefault(node_id, {}).setdefault("inputs", {}).update(fields)
 
@@ -139,11 +146,6 @@ def _poll_history(prompt_id, timeout=600):
 
 
 def _extract_text(history):
-    """
-    Recorre los outputs del history buscando el primer campo de texto.
-    Dependiendo del node pack, la clave puede ser 'text', 'string', etc.
-    Ajustá según lo que devuelva tu nodo de salida.
-    """
     outputs = history.get("outputs", {})
     for node_id, node_out in outputs.items():
         for key in ("text", "string", "output"):

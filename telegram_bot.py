@@ -3,7 +3,7 @@ Bot de Telegram que reenvía los mensajes del usuario al endpoint
 serverless de RunPod (ComfyUI + LLM) y responde con el texto generado.
 
 Requisitos:
-    pip install python-telegram-bot==21.* requests
+    pip install python-telegram-bot==21.* requests python-dotenv
 
 Variables de entorno necesarias:
     TELEGRAM_BOT_TOKEN   -> token de @BotFather
@@ -14,6 +14,7 @@ Variables de entorno necesarias:
 import asyncio
 import logging
 import os
+import time
 from dotenv import load_dotenv
 import requests
 from telegram import Update
@@ -25,7 +26,9 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
 load_dotenv()
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -37,7 +40,6 @@ RUNPOD_API_KEY = os.environ["RUNPOD_API_KEY"]
 RUNPOD_ENDPOINT_ID = os.environ["RUNPOD_ENDPOINT_ID"]
 
 RUNPOD_URL = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/runsync"
-RUNPOD_ASYNC_URL = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
 RUNPOD_STATUS_URL = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status"
 
 HEADERS = {
@@ -45,29 +47,39 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Historial simple por chat (en memoria; se pierde si el bot se reinicia)
+# Historial simple por chat (en memoria)
 CHAT_HISTORY: dict[int, list[dict]] = {}
 SYSTEM_PROMPT = "Sos un asistente útil, directo y sin filtros innecesarios."
 
 
 def _call_runpod_sync(prompt: str, system_prompt: str, timeout: int = 120) -> str:
-    """Usa /runsync: espera bloqueando hasta el timeout del endpoint."""
+    """Usa /runsync: envía el payload completo configurado para el nodo TextGenerate."""
     payload = {
         "input": {
             "prompt": prompt,
             "system_prompt": system_prompt,
-            "max_tokens": 700,
+            "max_length": 1024,
+            "sampling_mode": "on",
+            "thinking": False,
+            "use_default_template": True,
             "temperature": 0.8,
+            "top_k": 64,
+            "top_p": 0.95,
+            "min_p": 0.05,
+            "repetition_penalty": 1.05,
+            "presence_penalty": 0.0,
+            "seed": 0
         }
     }
+    
     resp = requests.post(RUNPOD_URL, headers=HEADERS, json=payload, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
     if data.get("status") == "COMPLETED":
-        return data["output"].get("response", "(sin respuesta)")
+        return data.get("output", {}).get("response", "(sin respuesta)")
 
-    # Si tarda más que el timeout de /runsync, RunPod devuelve IN_PROGRESS con un id.
+    # Si la ejecución supera el timeout del runsync, entra a estado IN_PROGRESS
     if "id" in data:
         return _poll_status(data["id"])
 
@@ -81,20 +93,22 @@ def _poll_status(job_id: str, max_wait: int = 600, interval: int = 3) -> str:
         r.raise_for_status()
         data = r.json()
         status = data.get("status")
+        
         if status == "COMPLETED":
-            return data["output"].get("response", "(sin respuesta)")
+            return data.get("output", {}).get("response", "(sin respuesta)")
         if status in ("FAILED", "CANCELLED"):
             return f"El job falló: {data}"
+            
         waited += interval
-        import time
         time.sleep(interval)
+        
     return "Timeout esperando la respuesta del modelo."
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     CHAT_HISTORY.pop(update.effective_chat.id, None)
     await update.message.reply_text(
-        "Hola, soy un bot conectado a un LLM sin censura corriendo en RunPod. "
+        "Hola, soy un bot conectado a un LLM corriendo en RunPod. "
         "Escribime lo que quieras. Usá /reset para limpiar el contexto."
     )
 
@@ -110,7 +124,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         response_text = await loop.run_in_executor(
             None, _call_runpod_sync, user_text, SYSTEM_PROMPT
@@ -119,7 +133,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.exception("Error llamando a RunPod")
         response_text = f"Error contactando al modelo: {e}"
 
-    # Telegram limita mensajes a 4096 caracteres
+    # Dividir el texto para no exceder el límite de 4096 caracteres de Telegram
     for i in range(0, len(response_text), 4000):
         await update.message.reply_text(response_text[i : i + 4000])
 
@@ -129,6 +143,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
     log.info("Bot arrancado, esperando mensajes...")
     app.run_polling()
 

@@ -48,15 +48,17 @@ RUN pip install --no-cache-dir -U "huggingface_hub[cli]" hf_transfer runpod --ig
 # archivo que tu workflow referencia: qwen3.5_4b_bf16.safetensors).
 # ---------------------------------------------------------------------------
 ARG HF_TOKEN
-ENV HF_TOKEN=${HF_TOKEN}
+
 ENV MODEL_REPO=Comfy-Org/Qwen3.5
 ENV MODEL_FILE=text_encoders/qwen3.5_4b_bf16.safetensors
 ENV TEXT_ENCODERS_DIR=${COMFYUI_PATH}/models/text_encoders/qwen
 
 RUN mkdir -p ${TEXT_ENCODERS_DIR} && \
+    HF_TOKEN=${HF_TOKEN} \
     hf download ${MODEL_REPO} ${MODEL_FILE} \
-        --local-dir /tmp/qwen_dl \
-    mv /tmp/qwen_dl/${MODEL_FILE} ${TEXT_ENCODERS_DIR}/qwen3.5_4b_bf16.safetensors && \
+        --local-dir /tmp/qwen_dl && \
+    mv /tmp/qwen_dl/${MODEL_FILE} \
+       ${TEXT_ENCODERS_DIR}/qwen3.5_4b_bf16.safetensors && \
     rm -rf /tmp/qwen_dl
 
 # ---------------------------------------------------------------------------

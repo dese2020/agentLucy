@@ -1,6 +1,15 @@
 """
-Bot de Telegram que reenvía los mensajes del usuario al endpoint
-serverless de RunPod (ComfyUI + LLM) y responde con el texto generado.
+Bot de Telegram que habla con el endpoint serverless de RunPod
+(ComfyUI + Qwen3.5 LLM + Fish Audio S2-Pro TTS/voice cloning).
+
+Modos:
+    - Texto normal              -> chat con el LLM (Qwen3.5)
+    - /tts <texto>               -> texto a voz con la voz por defecto
+    - Enviar una nota de voz     -> queda guardada como "voz de referencia"
+    - /clonar <texto>            -> texto a voz clonando la última nota de
+                                      voz enviada en este chat
+    - /voz_default                -> olvida la voz de referencia guardada
+    - /reset                      -> limpia el contexto del LLM
 
 Requisitos:
     pip install python-telegram-bot==21.* requests python-dotenv
@@ -12,6 +21,7 @@ Variables de entorno necesarias:
 """
 
 import asyncio
+import base64
 import logging
 import os
 import time
@@ -47,15 +57,59 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Historial simple por chat (en memoria)
+# Estado simple en memoria (se pierde si el bot se reinicia)
 CHAT_HISTORY: dict[int, list[dict]] = {}
+PENDING_VOICE_REF: dict[int, dict] = {}  # chat_id -> {"audio_b64": ..., "format": "ogg"}
 SYSTEM_PROMPT = "Sos un asistente útil, directo y sin filtros innecesarios."
 
 
-def _call_runpod_sync(prompt: str, system_prompt: str, timeout: int = 120) -> str:
-    """Usa /runsync: envía el payload completo configurado para el nodo TextGenerate."""
+# ---------------------------------------------------------------------------
+# Llamadas genéricas a RunPod
+# ---------------------------------------------------------------------------
+
+def _call_runpod(payload: dict, timeout: int = 180) -> dict:
+    """POST a /runsync. Devuelve el dict "output" completo (no solo texto),
+    para poder usarlo tanto en el modo LLM como en TTS/voice cloning."""
+    resp = requests.post(RUNPOD_URL, headers=HEADERS, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data.get("status") == "COMPLETED":
+        return data.get("output", {})
+
+    if "id" in data:
+        return _poll_status(data["id"])
+
+    return {"error": f"Error inesperado: {data}"}
+
+
+def _poll_status(job_id: str, max_wait: int = 600, interval: int = 3) -> dict:
+    waited = 0
+    while waited < max_wait:
+        r = requests.get(f"{RUNPOD_STATUS_URL}/{job_id}", headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        status = data.get("status")
+
+        if status == "COMPLETED":
+            return data.get("output", {})
+        if status in ("FAILED", "CANCELLED"):
+            return {"error": f"El job falló: {data}"}
+
+        waited += interval
+        time.sleep(interval)
+
+    return {"error": "Timeout esperando la respuesta del modelo."}
+
+
+# ---------------------------------------------------------------------------
+# Modo LLM (chat de texto)
+# ---------------------------------------------------------------------------
+
+def _call_runpod_llm(prompt: str, system_prompt: str) -> str:
     payload = {
         "input": {
+            "mode": "llm",
             "prompt": prompt,
             "system_prompt": system_prompt,
             "max_length": 1024,
@@ -68,54 +122,88 @@ def _call_runpod_sync(prompt: str, system_prompt: str, timeout: int = 120) -> st
             "min_p": 0.05,
             "repetition_penalty": 1.05,
             "presence_penalty": 0.0,
-            "seed": 0
+            "seed": 0,
         }
     }
-    
-    resp = requests.post(RUNPOD_URL, headers=HEADERS, json=payload, timeout=timeout)
-    resp.raise_for_status()
-    data = resp.json()
-
-    if data.get("status") == "COMPLETED":
-        return data.get("output", {}).get("response", "(sin respuesta)")
-
-    # Si la ejecución supera el timeout del runsync, entra a estado IN_PROGRESS
-    if "id" in data:
-        return _poll_status(data["id"])
-
-    return f"Error inesperado: {data}"
+    output = _call_runpod(payload)
+    if "error" in output:
+        return output["error"]
+    return output.get("response", "(sin respuesta)")
 
 
-def _poll_status(job_id: str, max_wait: int = 600, interval: int = 3) -> str:
-    waited = 0
-    while waited < max_wait:
-        r = requests.get(f"{RUNPOD_STATUS_URL}/{job_id}", headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        status = data.get("status")
-        
-        if status == "COMPLETED":
-            return data.get("output", {}).get("response", "(sin respuesta)")
-        if status in ("FAILED", "CANCELLED"):
-            return f"El job falló: {data}"
-            
-        waited += interval
-        time.sleep(interval)
-        
-    return "Timeout esperando la respuesta del modelo."
+# ---------------------------------------------------------------------------
+# Modo TTS / voice cloning (Fish Audio S2-Pro)
+# ---------------------------------------------------------------------------
+# Contrato de payload (el handler.py del lado del servidor debe traducir
+# estos campos a los inputs reales de los nodos de ComfyUI-FishAudioS2):
+#   mode: "tts"           -> {text, language?}
+#   mode: "voice_clone"   -> {text, reference_audio_b64, reference_audio_format, reference_text?}
+# Respuesta esperada: {"audio_base64": "...", "audio_format": "wav"}
 
+def _call_runpod_tts(text: str) -> dict:
+    payload = {"input": {"mode": "tts", "text": text, "language": "auto"}}
+    return _call_runpod(payload)
+
+
+def _call_runpod_voice_clone(text: str, reference_audio_b64: str, audio_format: str) -> dict:
+    payload = {
+        "input": {
+            "mode": "voice_clone",
+            "text": text,
+            "reference_audio_b64": reference_audio_b64,
+            "reference_audio_format": audio_format,
+        }
+    }
+    return _call_runpod(payload, timeout=240)
+
+
+async def _send_audio_output(update: Update, output: dict, caption: str = None):
+    if "error" in output:
+        await update.message.reply_text(f"Error generando audio: {output['error']}")
+        return
+
+    audio_b64 = output.get("audio_base64")
+    if not audio_b64:
+        await update.message.reply_text(f"Respuesta inesperada del modelo: {output}")
+        return
+
+    audio_bytes = base64.b64decode(audio_b64)
+    audio_format = output.get("audio_format", "wav")
+    filename = f"output.{audio_format}"
+
+    await update.message.reply_audio(
+        audio=audio_bytes,
+        filename=filename,
+        caption=caption,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Handlers de Telegram
+# ---------------------------------------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     CHAT_HISTORY.pop(update.effective_chat.id, None)
+    PENDING_VOICE_REF.pop(update.effective_chat.id, None)
     await update.message.reply_text(
-        "Hola, soy un bot conectado a un LLM corriendo en RunPod. "
-        "Escribime lo que quieras. Usá /reset para limpiar el contexto."
+        "Hola! Soy un bot conectado a un LLM y a Fish Audio (TTS) corriendo en RunPod.\n\n"
+        "- Escribime lo que quieras para chatear con el LLM.\n"
+        "- /tts <texto> para generar audio con la voz por defecto.\n"
+        "- Mandame una nota de voz para usarla como referencia, y después "
+        "/clonar <texto> para generar audio con esa voz.\n"
+        "- /voz_default para olvidar la voz de referencia guardada.\n"
+        "- /reset para limpiar el contexto del chat."
     )
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     CHAT_HISTORY.pop(update.effective_chat.id, None)
     await update.message.reply_text("Contexto reiniciado.")
+
+
+async def voz_default(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    PENDING_VOICE_REF.pop(update.effective_chat.id, None)
+    await update.message.reply_text("Listo, olvidé la voz de referencia guardada.")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,23 +215,102 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_running_loop()
     try:
         response_text = await loop.run_in_executor(
-            None, _call_runpod_sync, user_text, SYSTEM_PROMPT
+            None, _call_runpod_llm, user_text, SYSTEM_PROMPT
         )
     except requests.exceptions.RequestException as e:
         log.exception("Error llamando a RunPod")
         response_text = f"Error contactando al modelo: {e}"
 
-    # Dividir el texto para no exceder el límite de 4096 caracteres de Telegram
     for i in range(0, len(response_text), 4000):
         await update.message.reply_text(response_text[i : i + 4000])
+
+
+async def handle_tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("Uso: /tts <texto a convertir en audio>")
+        return
+
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action=ChatAction.RECORD_VOICE
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        output = await loop.run_in_executor(None, _call_runpod_tts, text)
+    except requests.exceptions.RequestException as e:
+        log.exception("Error llamando a RunPod (tts)")
+        await update.message.reply_text(f"Error contactando al modelo: {e}")
+        return
+
+    await _send_audio_output(update, output)
+
+
+async def handle_clonar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("Uso: /clonar <texto a decir con la voz guardada>")
+        return
+
+    ref = PENDING_VOICE_REF.get(chat_id)
+    if not ref:
+        await update.message.reply_text(
+            "Todavía no me mandaste ninguna nota de voz para clonar. "
+            "Mandame un audio primero y después usá /clonar <texto>."
+        )
+        return
+
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
+
+    loop = asyncio.get_running_loop()
+    try:
+        output = await loop.run_in_executor(
+            None, _call_runpod_voice_clone, text, ref["audio_b64"], ref["format"]
+        )
+    except requests.exceptions.RequestException as e:
+        log.exception("Error llamando a RunPod (voice_clone)")
+        await update.message.reply_text(f"Error contactando al modelo: {e}")
+        return
+
+    await _send_audio_output(update, output)
+
+
+async def handle_voice_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Guarda la nota de voz (o audio) recibida como referencia para /clonar."""
+    chat_id = update.effective_chat.id
+    voice = update.message.voice or update.message.audio
+    if voice is None:
+        return
+
+    tg_file = await context.bot.get_file(voice.file_id)
+    audio_bytes = await tg_file.download_as_bytearray()
+    audio_b64 = base64.b64encode(bytes(audio_bytes)).decode("utf-8")
+
+    # Las notas de voz de Telegram vienen en OGG/Opus. Si es un audio
+    # normal reenviado, puede venir en otro formato (mp3, m4a, etc.);
+    # el handler del lado servidor tiene que poder convertir con ffmpeg
+    # si hace falta.
+    audio_format = "ogg" if update.message.voice else (voice.mime_type or "").split("/")[-1] or "ogg"
+
+    PENDING_VOICE_REF[chat_id] = {"audio_b64": audio_b64, "format": audio_format}
+
+    await update.message.reply_text(
+        "Guardé esa voz como referencia. Ahora usá /clonar <texto> para "
+        "generar audio con esa voz."
+    )
 
 
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("tts", handle_tts))
+    app.add_handler(CommandHandler("clonar", handle_clonar))
+    app.add_handler(CommandHandler("voz_default", voz_default))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_note))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
+
     log.info("Bot arrancado, esperando mensajes...")
     app.run_polling()
 

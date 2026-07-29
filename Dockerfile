@@ -65,5 +65,38 @@ RUN mkdir -p ${TEXT_ENCODERS_DIR} && \
 COPY handler.py ${COMFYUI_PATH}/handler.py
 COPY workflow_api.json ${COMFYUI_PATH}/workflow_api.json
 
+# ---------------------------------------------------------------------------
+# Fish Audio S2-Pro (TTS + voice cloning), custom node de la comunidad.
+# https://github.com/Saganaki22/ComfyUI-FishAudioS2
+# ---------------------------------------------------------------------------
+RUN cd ${COMFYUI_PATH}/custom_nodes && \
+    git clone --depth 1 https://github.com/saganaki22/ComfyUI-FishAudioS2.git && \
+    cd ComfyUI-FishAudioS2 && \
+    pip install --no-cache-dir -r requirements.txt
+
+# descript-audio-codec y descript-audiotools van aparte con --no-deps a
+# propósito (según el README del proyecto): instalarlos con sus deps
+# arrastra un pin de protobuf<5 que rompe otros nodos en un entorno
+# compartido como este. El propio custom node los auto-instala al primer
+# arranque de ComfyUI si no están, pero los dejamos ya listos en el build
+# para no pagar ese costo en el primer cold start del serverless.
+RUN pip install --no-cache-dir --no-deps descript-audio-codec "descript-audiotools>=0.7.2" && \
+    pip install --no-cache-dir flatten-dict importlib-resources julius randomname ffmpy argbind
+
+# Modelo full precision (~24GB, requiere ~24GB VRAM libres según el README
+# del proyecto — ver aviso en la conversación sobre VRAM compartida con
+# Qwen3.5). Si más adelante hace falta cambiar a la variante FP8
+# (drbaph/s2-pro-fp8, ~20GB VRAM), es cuestión de cambiar estas dos líneas.
+ENV FISH_MODEL_REPO=fishaudio/s2-pro
+ENV FISH_MODEL_DIR=${COMFYUI_PATH}/models/fishaudioS2/s2-pro
+
+RUN mkdir -p ${FISH_MODEL_DIR} && \
+    hf download ${FISH_MODEL_REPO} --local-dir ${FISH_MODEL_DIR}
+
+RUN test -d ${FISH_MODEL_DIR} && \
+    size_mb=$(du -sm ${FISH_MODEL_DIR} | cut -f1) && \
+    echo "Fish Audio S2-Pro descargado: ${size_mb}MB" && \
+    [ "$size_mb" -gt 5000 ] || (echo "ERROR: el modelo de Fish Audio no se descargó completo" && exit 1)
+
 WORKDIR ${COMFYUI_PATH}
 CMD ["python3", "-u", "handler.py"]

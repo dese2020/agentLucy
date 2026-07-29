@@ -201,6 +201,31 @@ def handler(job):
         r.raise_for_status()
         return {"object_info": r.json()}
 
+    # Modo debug: busca nodos por substring en su class_type o display_name.
+    # Útil cuando conocemos el nombre "bonito" que se ve en la UI (ej. "Fish
+    # S2 TTS") pero no el class_type interno que hay que usar en el JSON de
+    # /prompt. Devuelve solo nombre + tipo de cada input para no mandar
+    # megabytes de object_info completo.
+    # Uso: {"input": {"debug": "search_nodes", "query": "fish"}}
+    if job_input.get("debug") == "search_nodes":
+        query = job_input.get("query", "").lower()
+        r = requests.get(f"{COMFY_URL}/object_info", timeout=60)
+        r.raise_for_status()
+        all_nodes = r.json()
+        matches = {}
+        for class_type, info in all_nodes.items():
+            display_name = info.get("display_name", "")
+            if query in class_type.lower() or query in display_name.lower():
+                inputs = info.get("input", {})
+                matches[class_type] = {
+                    "display_name": display_name,
+                    "required": {k: v[0] for k, v in inputs.get("required", {}).items()},
+                    "optional": {k: v[0] for k, v in inputs.get("optional", {}).items()},
+                    "output": info.get("output"),
+                    "output_name": info.get("output_name"),
+                }
+        return {"matches": matches}
+
     if not job_input.get("prompt"):
         return {"error": "Falta el campo 'prompt' en el input"}
 

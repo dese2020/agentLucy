@@ -1,16 +1,17 @@
 """
-RunPod Serverless handler para correr un LLM (Qwen3.5-4B-Deckard-HERETIC)
-a través de ComfyUI (usando comfyui_LLM_party como backend de chat).
+RunPod Serverless handler para correr Qwen3.5-4B a través de ComfyUI,
+usando los nodos nativos CLIPLoader + TextGenerate (comfy-core).
 
 Input esperado (job["input"]):
 {
     "prompt": "texto del usuario",
     "system_prompt": "opcional",
     "max_length": 1024,          # opcional
-    "sampling_mode": "on",       # opcional ("on", "off")
+    "sampling_mode": "on",       # opcional: "on" o "off". Si es "off" se
+                                  # ignoran temperature/top_k/etc (greedy).
     "thinking": false,           # opcional
     "use_default_template": true,# opcional
-    "temperature": 0.7,          # opcional
+    "temperature": 0.7,          # opcional (solo aplica si sampling_mode="on")
     "top_k": 64,                 # opcional
     "top_p": 0.95,               # opcional
     "min_p": 0.05,               # opcional
@@ -19,6 +20,11 @@ Input esperado (job["input"]):
     "seed": 0,                   # opcional
     "workflow_overrides": {...}  # opcional: para pisar nodos puntuales
 }
+
+Nota interna: TextGenerate.sampling_mode es un campo COMFY_DYNAMICCOMBO_V3
+(confirmado vía /object_info). El handler arma automáticamente la
+estructura anidada {"key": "on"/"off", "inputs": {...}} que esto requiere;
+no hace falta que quien llame al endpoint lo sepa.
 
 Output:
 {
@@ -101,19 +107,41 @@ def _build_prompt(job_input):
     # 2. Configurar todos los parámetros del nodo TextGenerate (68)
     if NODE_ID_SAMPLER_OPTS in wf:
         node_inputs = wf[NODE_ID_SAMPLER_OPTS]["inputs"]
-        
-        # Mapeo de parámetros con sus valores por defecto
+
         node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 1024))
-        node_inputs["sampling_mode"] = job_input.get("sampling_mode", node_inputs.get("sampling_mode", "on"))
         node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", False))
-        node_inputs["use_default_template"] = job_input.get("use_default_template", node_inputs.get("use_default_template", True))
-        node_inputs["temperature"] = job_input.get("temperature", node_inputs.get("temperature", 0.7))
-        node_inputs["top_k"] = job_input.get("top_k", node_inputs.get("top_k", 64))
-        node_inputs["top_p"] = job_input.get("top_p", node_inputs.get("top_p", 0.95))
-        node_inputs["min_p"] = job_input.get("min_p", node_inputs.get("min_p", 0.05))
-        node_inputs["repetition_penalty"] = job_input.get("repetition_penalty", node_inputs.get("repetition_penalty", 1.05))
-        node_inputs["presence_penalty"] = job_input.get("presence_penalty", node_inputs.get("presence_penalty", 0.0))
-        node_inputs["seed"] = job_input.get("seed", node_inputs.get("seed", 0))
+        node_inputs["use_default_template"] = job_input.get(
+            "use_default_template", node_inputs.get("use_default_template", True)
+        )
+
+        # sampling_mode es un COMFY_DYNAMICCOMBO_V3: no es un string plano.
+        # Según /object_info, cuando la opción elegida es "on", los
+        # parámetros de sampling van ANIDADOS dentro del valor de
+        # sampling_mode (no como claves sueltas al lado de max_length).
+        do_sample = job_input.get("sampling_mode", "on") != "off"
+        if do_sample:
+            existing = node_inputs.get("sampling_mode", {})
+            existing_inputs = existing.get("inputs", {}) if isinstance(existing, dict) else {}
+            node_inputs["sampling_mode"] = {
+                "key": "on",
+                "inputs": {
+                    "temperature": job_input.get(
+                        "temperature", existing_inputs.get("temperature", 0.7)
+                    ),
+                    "top_k": job_input.get("top_k", existing_inputs.get("top_k", 64)),
+                    "top_p": job_input.get("top_p", existing_inputs.get("top_p", 0.95)),
+                    "min_p": job_input.get("min_p", existing_inputs.get("min_p", 0.05)),
+                    "repetition_penalty": job_input.get(
+                        "repetition_penalty", existing_inputs.get("repetition_penalty", 1.05)
+                    ),
+                    "seed": job_input.get("seed", existing_inputs.get("seed", 0)),
+                    "presence_penalty": job_input.get(
+                        "presence_penalty", existing_inputs.get("presence_penalty", 0.0)
+                    ),
+                },
+            }
+        else:
+            node_inputs["sampling_mode"] = {"key": "off", "inputs": {}}
 
     # Overrides manuales opcionales
     for node_id, fields in job_input.get("workflow_overrides", {}).items():

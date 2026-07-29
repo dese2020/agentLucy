@@ -190,6 +190,21 @@ def handler(job):
 
     _start_comfyui()
 
+    # Modo debug: convierte el workflow original en formato UI (bundleado en
+    # ui_workflow_source.json) al formato API real, usando el endpoint
+    # /workflow/convert (mismo código que usa el botón "Save (API)" del
+    # frontend). Esto da el JSON garantizado correcto para inputs raros
+    # como el sampling_mode (COMFY_DYNAMICCOMBO_V3) de TextGenerate, sin
+    # tener que adivinar la estructura a mano.
+    # Uso: {"input": {"debug": "convert_workflow"}}
+    if job_input.get("debug") == "convert_workflow":
+        ui_workflow_path = os.path.join(COMFYUI_PATH, "ui_workflow_source.json")
+        with open(ui_workflow_path, "r") as f:
+            ui_workflow = json.load(f)
+        r = requests.post(f"{COMFY_URL}/workflow/convert", json=ui_workflow, timeout=60)
+        r.raise_for_status()
+        return {"api_workflow": r.json()}
+
     # Modo debug: en vez de generar texto, devuelve la definición real del
     # nodo (tal como la ve /object_info de ComfyUI). Sirve para confirmar
     # el formato exacto que espera un input tipo DynamicCombo (como

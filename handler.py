@@ -159,10 +159,23 @@ def _extract_text(history):
 
 def handler(job):
     job_input = job.get("input", {})
+
+    _start_comfyui()
+
+    # Modo debug: en vez de generar texto, devuelve la definición real del
+    # nodo (tal como la ve /object_info de ComfyUI). Sirve para confirmar
+    # el formato exacto que espera un input tipo DynamicCombo (como
+    # sampling_mode) sin necesitar abrir la UI en un Pod aparte.
+    # Uso: {"input": {"debug": "object_info", "node_class": "TextGenerate"}}
+    if job_input.get("debug") == "object_info":
+        node_class = job_input.get("node_class", "TextGenerate")
+        r = requests.get(f"{COMFY_URL}/object_info/{node_class}", timeout=30)
+        r.raise_for_status()
+        return {"object_info": r.json()}
+
     if not job_input.get("prompt"):
         return {"error": "Falta el campo 'prompt' en el input"}
 
-    _start_comfyui()
     wf = _build_prompt(job_input)
     prompt_id, _ = _queue_prompt(wf)
     history = _poll_history(prompt_id)

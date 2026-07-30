@@ -117,8 +117,8 @@ def _build_tts_workflow(job_input):
                 "device": "auto",
                 "precision": "auto",
                 "attention": "auto",
-                "chunk_length": 0,
-                "max_new_tokens": 0,
+                "chunk_length": 200,      # <--- Cambiado a 200 (INT válido)
+                "max_new_tokens": 1024,    # <--- Cambiado a 1024 (INT válido)
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1,
@@ -145,7 +145,6 @@ def _build_voice_clone_workflow(job_input):
     ref_b64 = job_input.get("reference_audio_b64", "")
     ref_format = job_input.get("reference_audio_format", "ogg")
 
-    # Guardar audio de referencia localmente para LoadAudio
     filename = f"ref_{uuid.uuid4().hex[:8]}.{ref_format}"
     filepath = os.path.join(INPUT_DIR, filename)
     with open(filepath, "wb") as f:
@@ -168,8 +167,8 @@ def _build_voice_clone_workflow(job_input):
                 "device": "auto",
                 "precision": "auto",
                 "attention": "auto",
-                "chunk_length": 0,
-                "max_new_tokens": 0,
+                "chunk_length": 200,      # <--- Cambiado a 200 (INT válido)
+                "max_new_tokens": 1024,    # <--- Cambiado a 1024 (INT válido)
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1,

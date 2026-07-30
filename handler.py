@@ -1,35 +1,6 @@
 """
-RunPod Serverless handler para correr Qwen3.5-4B a través de ComfyUI,
-usando los nodos nativos CLIPLoader + TextGenerate (comfy-core).
-
-Input esperado (job["input"]):
-{
-    "prompt": "texto del usuario",
-    "system_prompt": "opcional",
-    "max_length": 1024,          # opcional
-    "sampling_mode": "on",       # opcional: "on" o "off". Si es "off" se
-                                  # ignoran temperature/top_k/etc (greedy).
-    "thinking": false,           # opcional
-    "use_default_template": true,# opcional
-    "temperature": 0.7,          # opcional (solo aplica si sampling_mode="on")
-    "top_k": 64,                 # opcional
-    "top_p": 0.95,               # opcional
-    "min_p": 0.05,               # opcional
-    "repetition_penalty": 1.05,  # opcional
-    "presence_penalty": 0.0,     # opcional
-    "seed": 0,                   # opcional
-    "workflow_overrides": {...}  # opcional: para pisar nodos puntuales
-}
-
-Nota interna: TextGenerate.sampling_mode es un campo COMFY_DYNAMICCOMBO_V3
-(confirmado vía /object_info). El handler arma automáticamente la
-estructura anidada {"key": "on"/"off", "inputs": {...}} que esto requiere;
-no hace falta que quien llame al endpoint lo sepa.
-
-Output:
-{
-    "response": "texto generado por el modelo"
-}
+RunPod Serverless handler para correr DavidAU/Qwen3.5-4B-Deckard-HERETIC-UNCENSORED-Thinking
+a través de ComfyUI, usando los nodos nativos CLIPLoader + TextGenerate.
 """
 
 import json
@@ -109,19 +80,14 @@ def _build_prompt(job_input):
         node_inputs = wf[NODE_ID_SAMPLER_OPTS]["inputs"]
 
         node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 1024))
-        node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", False))
+        node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", True))
         node_inputs["use_default_template"] = job_input.get(
             "use_default_template", node_inputs.get("use_default_template", True)
         )
 
-        # sampling_mode es un COMFY_DYNAMICCOMBO_V3. Confirmado con el
-        # endpoint /workflow/convert (Save-API real): NO es un dict anidado
-        # ni claves sueltas -- son claves con notación de punto
-        # "sampling_mode.<campo>", más "sampling_mode" como string plano
-        # ("on"/"off").
         do_sample = job_input.get("sampling_mode", "on") != "off"
 
-        # Limpiar cualquier resabio de intentos anteriores (dict anidado)
+        # Limpiar keys de sampling_mode
         node_inputs.pop("sampling_mode", None)
         for k in list(node_inputs.keys()):
             if k.startswith("sampling_mode."):
@@ -190,13 +156,6 @@ def handler(job):
 
     _start_comfyui()
 
-    # Modo debug: convierte el workflow original en formato UI (bundleado en
-    # ui_workflow_source.json) al formato API real, usando el endpoint
-    # /workflow/convert (mismo código que usa el botón "Save (API)" del
-    # frontend). Esto da el JSON garantizado correcto para inputs raros
-    # como el sampling_mode (COMFY_DYNAMICCOMBO_V3) de TextGenerate, sin
-    # tener que adivinar la estructura a mano.
-    # Uso: {"input": {"debug": "convert_workflow"}}
     if job_input.get("debug") == "convert_workflow":
         ui_workflow_path = os.path.join(COMFYUI_PATH, "ui_workflow_source.json")
         with open(ui_workflow_path, "r") as f:
@@ -205,11 +164,6 @@ def handler(job):
         r.raise_for_status()
         return {"api_workflow": r.json()}
 
-    # Modo debug: en vez de generar texto, devuelve la definición real del
-    # nodo (tal como la ve /object_info de ComfyUI). Sirve para confirmar
-    # el formato exacto que espera un input tipo DynamicCombo (como
-    # sampling_mode) sin necesitar abrir la UI en un Pod aparte.
-    # Uso: {"input": {"debug": "object_info", "node_class": "TextGenerate"}}
     if job_input.get("debug") == "object_info":
         node_class = job_input.get("node_class", "TextGenerate")
         r = requests.get(f"{COMFY_URL}/object_info/{node_class}", timeout=30)

@@ -60,7 +60,7 @@ def _call_runpod_sync(prompt: str, system_prompt: str, timeout: int = 120) -> st
             "system_prompt": system_prompt,
             "max_length": 1024,
             "sampling_mode": "on",
-            "thinking": False,
+            "thinking": False,  # Ajustado a False por defecto
             "use_default_template": True,
             "temperature": 0.8,
             "top_k": 64,

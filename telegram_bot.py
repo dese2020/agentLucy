@@ -1,23 +1,6 @@
 """
 Bot de Telegram que habla con el endpoint serverless de RunPod
-(ComfyUI + Qwen3.5 LLM + Fish Audio S2-Pro TTS/voice cloning).
-
-Modos:
-    - Texto normal              -> chat con el LLM (Qwen3.5)
-    - /tts <texto>               -> texto a voz con la voz por defecto
-    - Enviar una nota de voz     -> queda guardada como "voz de referencia"
-    - /clonar <texto>            -> texto a voz clonando la última nota de
-                                      voz enviada en este chat
-    - /voz_default                -> olvida la voz de referencia guardada
-    - /reset                      -> limpia el contexto del LLM
-
-Requisitos:
-    pip install python-telegram-bot==21.* requests python-dotenv
-
-Variables de entorno necesarias:
-    TELEGRAM_BOT_TOKEN   -> token de @BotFather
-    RUNPOD_API_KEY       -> API key de RunPod
-    RUNPOD_ENDPOINT_ID   -> ID del endpoint serverless ya deployado
+(ComfyUI + Qwen3.5 Heretic Uncensored LLM + Fish Audio S2-Pro TTS/voice cloning).
 """
 
 import asyncio
@@ -57,19 +40,12 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Estado simple en memoria (se pierde si el bot se reinicia)
 CHAT_HISTORY: dict[int, list[dict]] = {}
-PENDING_VOICE_REF: dict[int, dict] = {}  # chat_id -> {"audio_b64": ..., "format": "ogg"}
+PENDING_VOICE_REF: dict[int, dict] = {}
 SYSTEM_PROMPT = "Sos un asistente útil, directo y sin filtros innecesarios."
 
 
-# ---------------------------------------------------------------------------
-# Llamadas genéricas a RunPod
-# ---------------------------------------------------------------------------
-
 def _call_runpod(payload: dict, timeout: int = 180) -> dict:
-    """POST a /runsync. Devuelve el dict "output" completo (no solo texto),
-    para poder usarlo tanto en el modo LLM como en TTS/voice cloning."""
     resp = requests.post(RUNPOD_URL, headers=HEADERS, json=payload, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
@@ -102,10 +78,6 @@ def _poll_status(job_id: str, max_wait: int = 600, interval: int = 3) -> dict:
     return {"error": "Timeout esperando la respuesta del modelo."}
 
 
-# ---------------------------------------------------------------------------
-# Modo LLM (chat de texto)
-# ---------------------------------------------------------------------------
-
 def _call_runpod_llm(prompt: str, system_prompt: str) -> str:
     payload = {
         "input": {
@@ -114,7 +86,7 @@ def _call_runpod_llm(prompt: str, system_prompt: str) -> str:
             "system_prompt": system_prompt,
             "max_length": 1024,
             "sampling_mode": "on",
-            "thinking": False,
+            "thinking": True,
             "use_default_template": True,
             "temperature": 0.8,
             "top_k": 64,
@@ -130,15 +102,6 @@ def _call_runpod_llm(prompt: str, system_prompt: str) -> str:
         return output["error"]
     return output.get("response", "(sin respuesta)")
 
-
-# ---------------------------------------------------------------------------
-# Modo TTS / voice cloning (Fish Audio S2-Pro)
-# ---------------------------------------------------------------------------
-# Contrato de payload (el handler.py del lado del servidor debe traducir
-# estos campos a los inputs reales de los nodos de ComfyUI-FishAudioS2):
-#   mode: "tts"           -> {text, language?}
-#   mode: "voice_clone"   -> {text, reference_audio_b64, reference_audio_format, reference_text?}
-# Respuesta esperada: {"audio_base64": "...", "audio_format": "wav"}
 
 def _call_runpod_tts(text: str) -> dict:
     payload = {"input": {"mode": "tts", "text": text, "language": "auto"}}
@@ -168,7 +131,7 @@ async def _send_audio_output(update: Update, output: dict, caption: str = None):
         return
 
     audio_bytes = base64.b64decode(audio_b64)
-    audio_format = output.get("audio_format", "wav")
+    audio_format = output.get("audio_format", "mp3")
     filename = f"output.{audio_format}"
 
     await update.message.reply_audio(
@@ -178,15 +141,11 @@ async def _send_audio_output(update: Update, output: dict, caption: str = None):
     )
 
 
-# ---------------------------------------------------------------------------
-# Handlers de Telegram
-# ---------------------------------------------------------------------------
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     CHAT_HISTORY.pop(update.effective_chat.id, None)
     PENDING_VOICE_REF.pop(update.effective_chat.id, None)
     await update.message.reply_text(
-        "Hola! Soy un bot conectado a un LLM y a Fish Audio (TTS) corriendo en RunPod.\n\n"
+        "Hola! Soy un bot conectado a Qwen3.5 Heretic y a Fish Audio (TTS) corriendo en RunPod.\n\n"
         "- Escribime lo que quieras para chatear con el LLM.\n"
         "- /tts <texto> para generar audio con la voz por defecto.\n"
         "- Mandame una nota de voz para usarla como referencia, y después "
@@ -277,7 +236,6 @@ async def handle_clonar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_voice_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Guarda la nota de voz (o audio) recibida como referencia para /clonar."""
     chat_id = update.effective_chat.id
     voice = update.message.voice or update.message.audio
     if voice is None:
@@ -287,10 +245,6 @@ async def handle_voice_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_bytes = await tg_file.download_as_bytearray()
     audio_b64 = base64.b64encode(bytes(audio_bytes)).decode("utf-8")
 
-    # Las notas de voz de Telegram vienen en OGG/Opus. Si es un audio
-    # normal reenviado, puede venir en otro formato (mp3, m4a, etc.);
-    # el handler del lado servidor tiene que poder convertir con ffmpeg
-    # si hace falta.
     audio_format = "ogg" if update.message.voice else (voice.mime_type or "").split("/")[-1] or "ogg"
 
     PENDING_VOICE_REF[chat_id] = {"audio_b64": audio_b64, "format": audio_format}

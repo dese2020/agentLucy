@@ -1,8 +1,9 @@
 """
 RunPod Serverless handler multimodal para ComfyUI:
-- Mode "llm": Qwen3.5-4B (CLIPLoader + TextGenerate)
+- Mode "llm": Qwen3.5-4B Heretic Uncensored (CLIPLoader + TextGenerate)
 - Mode "tts": Fish Audio S2-Pro TTS
 - Mode "voice_clone": Fish Audio S2-Pro Voice Cloning
+- Debug utilities: convert_workflow, object_info, search_nodes
 """
 
 import base64
@@ -26,7 +27,7 @@ OUTPUT_DIR = os.path.join(COMFYUI_PATH, "output")
 os.makedirs(INPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Node IDs del workflow base de LLM (Qwen3.5)
+# Node IDs del workflow base de LLM
 NODE_ID_USER_PROMPT = "31"
 NODE_ID_SAMPLER_OPTS = "68"
 
@@ -63,10 +64,6 @@ def _start_comfyui():
     _wait_for_server()
 
 
-# ---------------------------------------------------------------------------
-# Constructores de Workflows Dinámicos (TTS & Voice Clone)
-# ---------------------------------------------------------------------------
-
 def _build_llm_workflow(job_input):
     with open(WORKFLOW_PATH, "r") as f:
         wf = json.load(f)
@@ -81,7 +78,10 @@ def _build_llm_workflow(job_input):
     if NODE_ID_SAMPLER_OPTS in wf:
         node_inputs = wf[NODE_ID_SAMPLER_OPTS]["inputs"]
         node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 1024))
-        node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", False))
+        node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", True))
+        node_inputs["use_default_template"] = job_input.get(
+            "use_default_template", node_inputs.get("use_default_template", True)
+        )
 
         do_sample = job_input.get("sampling_mode", "on") != "off"
         node_inputs.pop("sampling_mode", None)
@@ -96,9 +96,14 @@ def _build_llm_workflow(job_input):
             node_inputs["sampling_mode.top_p"] = job_input.get("top_p", 0.95)
             node_inputs["sampling_mode.min_p"] = job_input.get("min_p", 0.05)
             node_inputs["sampling_mode.repetition_penalty"] = job_input.get("repetition_penalty", 1.05)
+            node_inputs["sampling_mode.presence_penalty"] = job_input.get("presence_penalty", 0.0)
             node_inputs["sampling_mode.seed"] = job_input.get("seed", 0)
         else:
             node_inputs["sampling_mode"] = "off"
+
+    # Overrides opcionales
+    for node_id, fields in job_input.get("workflow_overrides", {}).items():
+        wf.setdefault(node_id, {}).setdefault("inputs", {}).update(fields)
 
     return wf
 
@@ -117,8 +122,8 @@ def _build_tts_workflow(job_input):
                 "device": "auto",
                 "precision": "auto",
                 "attention": "auto",
-                "chunk_length": 200,      # <--- Cambiado a 200 (INT válido)
-                "max_new_tokens": 1024,    # <--- Cambiado a 1024 (INT válido)
+                "chunk_length": 200,
+                "max_new_tokens": 1024,
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1,
@@ -167,8 +172,8 @@ def _build_voice_clone_workflow(job_input):
                 "device": "auto",
                 "precision": "auto",
                 "attention": "auto",
-                "chunk_length": 200,      # <--- Cambiado a 200 (INT válido)
-                "max_new_tokens": 1024,    # <--- Cambiado a 1024 (INT válido)
+                "chunk_length": 200,
+                "max_new_tokens": 1024,
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1,
@@ -188,10 +193,6 @@ def _build_voice_clone_workflow(job_input):
         },
     }
 
-
-# ---------------------------------------------------------------------------
-# Ejecución y extracción de resultados
-# ---------------------------------------------------------------------------
 
 def _queue_prompt(wf):
     client_id = str(uuid.uuid4())
@@ -227,7 +228,12 @@ def _extract_audio_base64(history):
                 subfolder = audio_info.get("subfolder", "")
                 file_type = audio_info.get("type", "output")
 
-                filepath = os.path.join(OUTPUT_DIR, subfolder, filename) if subfolder else os.path.join(OUTPUT_DIR, filename)
+                if file_type == "temp":
+                    dir_path = os.path.join(COMFYUI_PATH, "temp", subfolder) if subfolder else os.path.join(COMFYUI_PATH, "temp")
+                else:
+                    dir_path = os.path.join(OUTPUT_DIR, subfolder) if subfolder else OUTPUT_DIR
+
+                filepath = os.path.join(dir_path, filename)
 
                 if os.path.exists(filepath):
                     with open(filepath, "rb") as f:
@@ -250,17 +256,13 @@ def _extract_text(history):
     return json.dumps(outputs)
 
 
-# ---------------------------------------------------------------------------
-# Handler principal
-# ---------------------------------------------------------------------------
-
 def handler(job):
     job_input = job.get("input", {})
     mode = job_input.get("mode", "llm")
 
     _start_comfyui()
 
-    # Comandos de depuración existentes
+    # --- Herramientas de Debug ---
     if job_input.get("debug") == "convert_workflow":
         ui_workflow_path = os.path.join(COMFYUI_PATH, "ui_workflow_source.json")
         with open(ui_workflow_path, "r") as f:
@@ -276,25 +278,26 @@ def handler(job):
         return {"object_info": r.json()}
 
     if job_input.get("debug") == "search_nodes":
-        query = job_input.get("query", "").lower()
-        r = requests.get(f"{COMFY_URL}/object_info", timeout=60)
+        search_term = job_input.get("query", "").lower()
+        r = requests.get(f"{COMFY_URL}/object_info", timeout=30)
         r.raise_for_status()
         all_nodes = r.json()
+        
         matches = {}
-        for class_type, info in all_nodes.items():
-            display_name = info.get("display_name") or ""
-            if query in class_type.lower() or query in display_name.lower():
-                inputs = info.get("input", {})
-                matches[class_type] = {
-                    "display_name": display_name,
-                    "required": {k: v[0] for k, v in inputs.get("required", {}).items()},
-                    "optional": {k: v[0] for k, v in inputs.get("optional", {}).items()},
-                    "output": info.get("output"),
-                    "output_name": info.get("output_name"),
+        for node_name, details in all_nodes.items():
+            display_name = details.get("display_name", "").lower()
+            category = details.get("category", "").lower()
+            if search_term in node_name.lower() or search_term in display_name or search_term in category:
+                matches[node_name] = {
+                    "display_name": details.get("display_name"),
+                    "category": details.get("category"),
+                    "input_required": list(details.get("input", {}).get("required", {}).keys()),
+                    "input_optional": list(details.get("input", {}).get("optional", {}).keys()),
+                    "output": details.get("output"),
                 }
-        return {"matches": matches}
+        return {"search_query": search_term, "count": len(matches), "matches": matches}
 
-    # Procesamiento por modos
+    # --- Modos de Producción ---
     try:
         if mode == "tts":
             if not job_input.get("text"):

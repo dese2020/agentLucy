@@ -108,13 +108,14 @@ def _call_runpod_tts(text: str) -> dict:
     return _call_runpod(payload)
 
 
-def _call_runpod_voice_clone(text: str, reference_audio_b64: str, audio_format: str) -> dict:
+def _call_runpod_voice_clone(text: str, reference_audio_b64: str, audio_format: str, reference_text: str = "") -> dict:
     payload = {
         "input": {
             "mode": "voice_clone",
             "text": text,
             "reference_audio_b64": reference_audio_b64,
             "reference_audio_format": audio_format,
+            "reference_text": reference_text,  # <-- Se envía a RunPod
         }
     }
     return _call_runpod(payload, timeout=240)
@@ -225,7 +226,12 @@ async def handle_clonar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_running_loop()
     try:
         output = await loop.run_in_executor(
-            None, _call_runpod_voice_clone, text, ref["audio_b64"], ref["format"]
+            None,
+            _call_runpod_voice_clone,
+            text,
+            ref["audio_b64"],
+            ref["format"],
+            ref.get("ref_text", ""),
         )
     except requests.exceptions.RequestException as e:
         log.exception("Error llamando a RunPod (voice_clone)")
@@ -241,18 +247,28 @@ async def handle_voice_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if voice is None:
         return
 
+    # Si el usuario escribió un texto junto al audio/nota de voz (caption)
+    ref_text = update.message.caption or ""
+
     tg_file = await context.bot.get_file(voice.file_id)
     audio_bytes = await tg_file.download_as_bytearray()
     audio_b64 = base64.b64encode(bytes(audio_bytes)).decode("utf-8")
 
     audio_format = "ogg" if update.message.voice else (voice.mime_type or "").split("/")[-1] or "ogg"
 
-    PENDING_VOICE_REF[chat_id] = {"audio_b64": audio_b64, "format": audio_format}
+    PENDING_VOICE_REF[chat_id] = {
+        "audio_b64": audio_b64,
+        "format": audio_format,
+        "ref_text": ref_text,
+    }
 
-    await update.message.reply_text(
-        "Guardé esa voz como referencia. Ahora usá /clonar <texto> para "
-        "generar audio con esa voz."
-    )
+    msg = "Guardé esa voz como referencia."
+    if ref_text:
+        msg += f'\n📝 Transcripción guardada: "{ref_text}"'
+    else:
+        msg += "\n💡 *Tip*: Si le agregás un texto (caption) a la nota de voz con lo que dijiste, la clonación será mucho más precisa."
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 def main():

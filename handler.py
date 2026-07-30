@@ -149,6 +149,7 @@ def _build_voice_clone_workflow(job_input):
     language = job_input.get("language", "auto")
     ref_b64 = job_input.get("reference_audio_b64", "")
     ref_format = job_input.get("reference_audio_format", "ogg")
+    ref_text = job_input.get("reference_text", "")  # <-- Transcripción de la voz de referencia
 
     filename = f"ref_{uuid.uuid4().hex[:8]}.{ref_format}"
     filepath = os.path.join(INPUT_DIR, filename)
@@ -167,6 +168,7 @@ def _build_voice_clone_workflow(job_input):
             "inputs": {
                 "text": text,
                 "reference_audio": ["1", 0],
+                "reference_text": ref_text,  # <-- Se pasa la transcripción de referencia
                 "model_path": "s2-pro",
                 "language": language,
                 "device": "auto",

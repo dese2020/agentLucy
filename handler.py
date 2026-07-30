@@ -114,34 +114,34 @@ def _build_prompt(job_input):
             "use_default_template", node_inputs.get("use_default_template", True)
         )
 
-        # sampling_mode es un COMFY_DYNAMICCOMBO_V3: no es un string plano.
-        # Según /object_info, cuando la opción elegida es "on", los
-        # parámetros de sampling van ANIDADOS dentro del valor de
-        # sampling_mode (no como claves sueltas al lado de max_length).
+        # sampling_mode es un COMFY_DYNAMICCOMBO_V3. Confirmado con el
+        # endpoint /workflow/convert (Save-API real): NO es un dict anidado
+        # ni claves sueltas -- son claves con notación de punto
+        # "sampling_mode.<campo>", más "sampling_mode" como string plano
+        # ("on"/"off").
         do_sample = job_input.get("sampling_mode", "on") != "off"
+
+        # Limpiar cualquier resabio de intentos anteriores (dict anidado)
+        node_inputs.pop("sampling_mode", None)
+        for k in list(node_inputs.keys()):
+            if k.startswith("sampling_mode."):
+                del node_inputs[k]
+
         if do_sample:
-            existing = node_inputs.get("sampling_mode", {})
-            existing_inputs = existing.get("inputs", {}) if isinstance(existing, dict) else {}
-            node_inputs["sampling_mode"] = {
-                "key": "on",
-                "inputs": {
-                    "temperature": job_input.get(
-                        "temperature", existing_inputs.get("temperature", 0.7)
-                    ),
-                    "top_k": job_input.get("top_k", existing_inputs.get("top_k", 64)),
-                    "top_p": job_input.get("top_p", existing_inputs.get("top_p", 0.95)),
-                    "min_p": job_input.get("min_p", existing_inputs.get("min_p", 0.05)),
-                    "repetition_penalty": job_input.get(
-                        "repetition_penalty", existing_inputs.get("repetition_penalty", 1.05)
-                    ),
-                    "seed": job_input.get("seed", existing_inputs.get("seed", 0)),
-                    "presence_penalty": job_input.get(
-                        "presence_penalty", existing_inputs.get("presence_penalty", 0.0)
-                    ),
-                },
-            }
+            node_inputs["sampling_mode"] = "on"
+            node_inputs["sampling_mode.temperature"] = job_input.get("temperature", 0.7)
+            node_inputs["sampling_mode.top_k"] = job_input.get("top_k", 64)
+            node_inputs["sampling_mode.top_p"] = job_input.get("top_p", 0.95)
+            node_inputs["sampling_mode.min_p"] = job_input.get("min_p", 0.05)
+            node_inputs["sampling_mode.repetition_penalty"] = job_input.get(
+                "repetition_penalty", 1.05
+            )
+            node_inputs["sampling_mode.seed"] = job_input.get("seed", 0)
+            node_inputs["sampling_mode.presence_penalty"] = job_input.get(
+                "presence_penalty", 0.0
+            )
         else:
-            node_inputs["sampling_mode"] = {"key": "off", "inputs": {}}
+            node_inputs["sampling_mode"] = "off"
 
     # Overrides manuales opcionales
     for node_id, fields in job_input.get("workflow_overrides", {}).items():
@@ -229,7 +229,7 @@ def handler(job):
         all_nodes = r.json()
         matches = {}
         for class_type, info in all_nodes.items():
-            display_name = info.get("display_name", "")
+            display_name = info.get("display_name") or ""
             if query in class_type.lower() or query in display_name.lower():
                 inputs = info.get("input", {})
                 matches[class_type] = {

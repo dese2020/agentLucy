@@ -41,7 +41,7 @@ ENV MODEL_REPO=DavidAU/Qwen3.5-4B-Deckard-HERETIC-UNCENSORED-Thinking
 ENV TEXT_ENCODERS_DIR=${COMFYUI_PATH}/models/text_encoders/qwen
 
 RUN mkdir -p ${TEXT_ENCODERS_DIR} && \
-    hf download ${MODEL_REPO} --local-dir /tmp/qwen_dl --exclude "*.bin" "*.pth" && \
+    hf download ${MODEL_REPO} --local-dir /tmp/qwen_dl --include "*.safetensors" && \
     python3 -c ' \
 import glob, os \
 from safetensors import safe_open \
@@ -52,7 +52,7 @@ for s in shards: \
     with safe_open(s, framework="pt", device="cpu") as f: \
         for k in f.keys(): \
             tensors[k] = f.get_tensor(k) \
-save_file(tensors, "'"${TEXT_ENCODERS_DIR}"'/qwen3.5_4b_heretic.safetensors") \
+save_file(tensors, f"{os.environ[\"TEXT_ENCODERS_DIR\"]}/qwen3.5_4b_heretic.safetensors") \
 ' && \
     rm -rf /tmp/qwen_dl
 

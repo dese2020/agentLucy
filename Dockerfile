@@ -1,15 +1,25 @@
-FROM wlsdml1114/engui_base_128_blackwell_13:1.2 AS runtime
+FROM nvidia/cuda:13.2.1-devel-ubuntu22.04 AS base
 
 # ---------------------------------------------------------------------------
-# Config
+# Configuración de variables de entorno
 # ---------------------------------------------------------------------------
 ENV COMFYUI_PATH=/opt/ComfyUI \
     HF_HOME=/opt/hf_cache \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends git wget && \
-    rm -rf /var/lib/apt/lists/*
+# ---------------------------------------------------------------------------
+# Paquetes del sistema y herramientas de compilación
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    python3 \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
 # Instalar ComfyUI
@@ -34,15 +44,15 @@ RUN cd ${COMFYUI_PATH}/custom_nodes && \
 COPY ui_workflow_source.json ${COMFYUI_PATH}/ui_workflow_source.json
 
 # ---------------------------------------------------------------------------
-# Descarga y conversión de DavidAU/Qwen3.5-4B-Deckard-HERETIC-UNCENSORED-Thinking
+# Descarga y conversión de nDimensional/Qwen3.5-9B-Uncensored-Safetensors
 # a un único archivo .safetensors (compatibilidad directa con CLIPLoader)
 # ---------------------------------------------------------------------------
-ENV MODEL_REPO=DavidAU/Qwen3.5-4B-Deckard-HERETIC-UNCENSORED-Thinking
+ENV MODEL_REPO=nDimensional/Qwen3.5-9B-Uncensored-Safetensors
 ENV TEXT_ENCODERS_DIR=${COMFYUI_PATH}/models/text_encoders/qwen
 
 RUN mkdir -p ${TEXT_ENCODERS_DIR} && \
     hf download ${MODEL_REPO} --local-dir /tmp/qwen_dl --include "*.safetensors" && \
-    python3 -c 'import glob, os; from safetensors import safe_open; from safetensors.torch import save_file; shards = sorted(glob.glob("/tmp/qwen_dl/*.safetensors")); tensors = {k: f.get_tensor(k) for s in shards for f in [safe_open(s, framework="pt", device="cpu")] for k in f.keys()}; save_file(tensors, os.path.join(os.environ["TEXT_ENCODERS_DIR"], "qwen3.5_4b_heretic.safetensors"))' && \
+    python3 -c 'import glob, os; from safetensors import safe_open; from safetensors.torch import save_file; shards = sorted(glob.glob("/tmp/qwen_dl/*.safetensors")); tensors = {k: f.get_tensor(k) for s in shards for f in [safe_open(s, framework="pt", device="cpu")] for k in f.keys()}; save_file(tensors, os.path.join(os.environ["TEXT_ENCODERS_DIR"], "qwen3.5_9b_uncensored.safetensors"))' && \
     rm -rf /tmp/qwen_dl
 
 # ---------------------------------------------------------------------------

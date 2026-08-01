@@ -1,6 +1,6 @@
 """
 RunPod Serverless handler multimodal para ComfyUI:
-- Mode "llm": Qwen3.5-4B Heretic Uncensored (CLIPLoader + TextGenerate)
+- Mode "llm": Qwen3.5-9B Uncensored (CLIPLoader + TextGenerate)
 - Mode "tts": Fish Audio S2-Pro TTS
 - Mode "voice_clone": Fish Audio S2-Pro Voice Cloning
 - Debug utilities: convert_workflow, object_info, search_nodes
@@ -70,7 +70,24 @@ def _build_llm_workflow(job_input):
 
     prompt_text = job_input.get("prompt", "")
     system_prompt = job_input.get("system_prompt", "")
-    full_prompt = f"{system_prompt}\n\n{prompt_text}" if system_prompt else prompt_text
+
+    # Inyección de plantilla ChatML explícita para asegurar separación de roles e idioma
+    if system_prompt:
+        full_prompt = (
+            f"<|im_start|>system\n"
+            f"{system_prompt}\n"
+            f"IMPORTANT: Always detect the language of the user's message and reply in that EXACT same language.\n"
+            f"<|im_end|>\n"
+            f"<|im_start|>user\n"
+            f"{prompt_text}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+    else:
+        full_prompt = (
+            f"<|im_start|>user\n"
+            f"{prompt_text}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
 
     if NODE_ID_USER_PROMPT in wf:
         wf[NODE_ID_USER_PROMPT]["inputs"]["value"] = full_prompt
@@ -79,9 +96,9 @@ def _build_llm_workflow(job_input):
         node_inputs = wf[NODE_ID_SAMPLER_OPTS]["inputs"]
         node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 1024))
         node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", True))
-        node_inputs["use_default_template"] = job_input.get(
-            "use_default_template", node_inputs.get("use_default_template", True)
-        )
+        
+        # Al inyectar ChatML manualmente, desactivamos use_default_template para evitar doble plantilla
+        node_inputs["use_default_template"] = job_input.get("use_default_template", False)
 
         do_sample = job_input.get("sampling_mode", "on") != "off"
         node_inputs.pop("sampling_mode", None)
@@ -149,7 +166,7 @@ def _build_voice_clone_workflow(job_input):
     language = job_input.get("language", "auto")
     ref_b64 = job_input.get("reference_audio_b64", "")
     ref_format = job_input.get("reference_audio_format", "ogg")
-    ref_text = job_input.get("reference_text", "")  # <-- Transcripción de la voz de referencia
+    ref_text = job_input.get("reference_text", "")
 
     filename = f"ref_{uuid.uuid4().hex[:8]}.{ref_format}"
     filepath = os.path.join(INPUT_DIR, filename)
@@ -168,7 +185,7 @@ def _build_voice_clone_workflow(job_input):
             "inputs": {
                 "text": text,
                 "reference_audio": ["1", 0],
-                "reference_text": ref_text,  # <-- Se pasa la transcripción de referencia
+                "reference_text": ref_text,
                 "model_path": "s2-pro",
                 "language": language,
                 "device": "auto",

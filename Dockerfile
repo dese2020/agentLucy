@@ -34,6 +34,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Herramientas de descarga y SDK RunPod
 # ---------------------------------------------------------------------------
 RUN pip install --no-cache-dir -U "huggingface_hub[cli]" hf_transfer runpod safetensors --ignore-installed
+RUN pip install --no-cache-dir sageattention
 
 # ---------------------------------------------------------------------------
 # Workflow-to-API converter

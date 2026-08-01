@@ -61,7 +61,7 @@ El bot:
   persistencia entre reinicios del bot; si necesitás memoria
   persistente por usuario, lo agregamos con sqlite o redis).
 
-## 5. Notas sobre el modelo
+## 5. Notas sobre el modeloa
 
 Usamos `Comfy-Org/Qwen3.5` (el `qwen3.5_4b_bf16.safetensors` que
 tu workflow ya referencia en el `CLIPLoader`), en vez del finetune de

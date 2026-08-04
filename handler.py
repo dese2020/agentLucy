@@ -149,7 +149,7 @@ def _build_voice_clone_workflow(job_input):
     language = job_input.get("language", "auto")
     ref_b64 = job_input.get("reference_audio_b64", "")
     ref_format = job_input.get("reference_audio_format", "ogg")
-    ref_text = job_input.get("reference_text", "")  # <-- Transcripción de la voz de referencia
+    ref_text = job_input.get("reference_text", "")  # Transcripción de la voz de referencia
 
     filename = f"ref_{uuid.uuid4().hex[:8]}.{ref_format}"
     filepath = os.path.join(INPUT_DIR, filename)
@@ -168,7 +168,7 @@ def _build_voice_clone_workflow(job_input):
             "inputs": {
                 "text": text,
                 "reference_audio": ["1", 0],
-                "reference_text": ref_text,  # <-- Se pasa la transcripción de referencia
+                "reference_text": ref_text,  # Se pasa la transcripción de referencia
                 "model_path": "s2-pro",
                 "language": language,
                 "device": "auto",
@@ -266,12 +266,37 @@ def handler(job):
 
     # --- Herramientas de Debug ---
     if job_input.get("debug") == "convert_workflow":
-        ui_workflow_path = os.path.join(COMFYUI_PATH, "ui_workflow_source.json")
-        with open(ui_workflow_path, "r") as f:
-            ui_workflow = json.load(f)
-        r = requests.post(f"{COMFY_URL}/workflow/convert", json=ui_workflow, timeout=60)
-        r.raise_for_status()
-        return {"api_workflow": r.json()}
+        ui_workflow = None
+
+        # 1. Verificar si viene codificado en Base64
+        if job_input.get("ui_workflow_b64"):
+            try:
+                b64_bytes = job_input["ui_workflow_b64"].encode("utf-8")
+                json_bytes = base64.b64decode(b64_bytes)
+                ui_workflow = json.loads(json_bytes.decode("utf-8"))
+            except Exception as err:
+                return {"error": f"Error al decodificar ui_workflow_b64: {str(err)}"}
+
+        # 2. Si no viene en Base64, intentar obtener el JSON directo
+        if not ui_workflow:
+            ui_workflow = job_input.get("ui_workflow") or job_input.get("workflow")
+
+        # 3. Fallback: buscar el archivo local por defecto
+        if not ui_workflow:
+            ui_workflow_path = os.path.join(COMFYUI_PATH, "ui_workflow_source.json")
+            if os.path.exists(ui_workflow_path):
+                with open(ui_workflow_path, "r") as f:
+                    ui_workflow = json.load(f)
+            else:
+                return {"error": "No se proporcionó 'ui_workflow_b64', 'ui_workflow' ni existe el archivo local por defecto."}
+
+        # 4. Enviar a ComfyUI para su conversión
+        try:
+            r = requests.post(f"{COMFY_URL}/workflow/convert", json=ui_workflow, timeout=60)
+            r.raise_for_status()
+            return {"api_workflow": r.json()}
+        except Exception as e:
+            return {"error": f"Fallo al convertir el workflow en ComfyUI: {str(e)}"}
 
     if job_input.get("debug") == "object_info":
         node_class = job_input.get("node_class", "TextGenerate")

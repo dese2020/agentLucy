@@ -15,6 +15,7 @@ import uuid
 
 import requests
 import runpod
+from faster_whisper import WhisperModel
 
 COMFY_HOST = "127.0.0.1"
 COMFY_PORT = 8188
@@ -32,6 +33,35 @@ NODE_ID_USER_PROMPT = "31"
 NODE_ID_SAMPLER_OPTS = "68"
 
 _comfy_process = None
+
+# --- ASR (Whisper) para autotranscribir el audio de referencia ---
+WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
+WHISPER_CACHE_DIR = os.environ.get("WHISPER_CACHE_DIR", "/opt/whisper_cache")
+WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")  # "cuda" si tienes VRAM libre
+WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+
+_whisper_model = None
+
+
+def _get_whisper_model():
+    global _whisper_model
+    if _whisper_model is None:
+        _whisper_model = WhisperModel(
+            WHISPER_MODEL_SIZE,
+            device=WHISPER_DEVICE,
+            compute_type=WHISPER_COMPUTE_TYPE,
+            download_root=WHISPER_CACHE_DIR,
+        )
+    return _whisper_model
+
+
+def _transcribe_audio(filepath, language=None):
+    """Transcribe un archivo de audio. Si language es None o 'auto', detecta el idioma."""
+    model = _get_whisper_model()
+    lang_arg = None if (not language or language == "auto") else language
+    segments, info = model.transcribe(filepath, language=lang_arg, beam_size=5)
+    text = " ".join(segment.text.strip() for segment in segments)
+    return text.strip(), info.language
 
 
 def _wait_for_server(timeout=180):
@@ -155,6 +185,14 @@ def _build_voice_clone_workflow(job_input):
     filepath = os.path.join(INPUT_DIR, filename)
     with open(filepath, "wb") as f:
         f.write(base64.b64decode(ref_b64))
+
+    if not ref_text:
+        detected_text, detected_lang = _transcribe_audio(filepath, language=language)
+        ref_text = detected_text
+        # Si el usuario dejó language="auto", usamos el idioma detectado por Whisper
+        # para el TTS también (mejor que dejarlo en "auto" para Fish Audio).
+        if language == "auto" and detected_lang:
+            language = detected_lang
 
     return {
         "1": {
@@ -298,6 +336,22 @@ def handler(job):
         except Exception as e:
             return {"error": f"Fallo al convertir el workflow en ComfyUI: {str(e)}"}
 
+    if job_input.get("debug") == "transcribe":
+        ref_b64 = job_input.get("reference_audio_b64", "")
+        ref_format = job_input.get("reference_audio_format", "ogg")
+        language = job_input.get("language", "auto")
+        if not ref_b64:
+            return {"error": "Falta 'reference_audio_b64' para debug='transcribe'"}
+        filename = f"debug_{uuid.uuid4().hex[:8]}.{ref_format}"
+        filepath = os.path.join(INPUT_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(base64.b64decode(ref_b64))
+        try:
+            text, detected_lang = _transcribe_audio(filepath, language=language)
+            return {"transcription": text, "detected_language": detected_lang}
+        except Exception as e:
+            return {"error": f"Fallo al transcribir: {str(e)}"}
+
     if job_input.get("debug") == "object_info":
         node_class = job_input.get("node_class", "TextGenerate")
         r = requests.get(f"{COMFY_URL}/object_info/{node_class}", timeout=30)
@@ -337,6 +391,8 @@ def handler(job):
         elif mode == "voice_clone":
             if not job_input.get("text") or not job_input.get("reference_audio_b64"):
                 return {"error": "Faltan campos 'text' o 'reference_audio_b64' para mode='voice_clone'"}
+            # reference_text ahora es opcional: si no se envía, se transcribe
+            # automáticamente el audio de referencia con Whisper.
             wf = _build_voice_clone_workflow(job_input)
             prompt_id = _queue_prompt(wf)
             history = _poll_history(prompt_id)

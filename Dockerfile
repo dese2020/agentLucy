@@ -67,6 +67,21 @@ RUN cd ${COMFYUI_PATH}/custom_nodes && \
 RUN pip install --no-cache-dir --no-deps descript-audio-codec "descript-audiotools>=0.7.2" && \
     pip install --no-cache-dir flatten-dict importlib-resources julius randomname ffmpy argbind
 
+# ---------------------------------------------------------------------------
+# Faster-Whisper (ASR) para autogenerar reference_text en voice cloning
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir faster-whisper
+
+ENV WHISPER_MODEL_SIZE=medium
+ENV WHISPER_CACHE_DIR=/opt/whisper_cache
+ENV WHISPER_DEVICE=cuda
+ENV WHISPER_COMPUTE_TYPE=float16
+
+# Nota: la descarga en build time se hace en 'cpu' porque el builder no tiene
+# GPU disponible. Los pesos son los mismos independientemente del device;
+# el runtime real usa cuda/float16 via las ENV de arriba (leidas en handler.py).
+RUN python3 -c "from faster_whisper import WhisperModel; import os; WhisperModel(os.environ['WHISPER_MODEL_SIZE'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_CACHE_DIR'])"
+
 ENV FISH_MODEL_REPO=fishaudio/s2-pro
 ENV FISH_MODEL_DIR=${COMFYUI_PATH}/models/fishaudioS2/s2-pro
 

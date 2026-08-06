@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.2.1-devel-ubuntu22.04 AS base
+FROM wlsdml1114/engui_base_128_blackwell_13:1.2 AS runtime
 
 # ---------------------------------------------------------------------------
 # Configuración de variables de entorno
@@ -8,18 +8,8 @@ ENV COMFYUI_PATH=/opt/ComfyUI \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     DEBIAN_FRONTEND=noninteractive
 
-# ---------------------------------------------------------------------------
-# Paquetes del sistema y herramientas de compilación
-# ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    wget \
-    python3 \
-    python3-pip \
-    python3-dev \
-    build-essential \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git wget && \
+    rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
 # Instalar ComfyUI

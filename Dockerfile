@@ -1,4 +1,4 @@
-FROM wlsdml1114/engui_base_128_blackwell_13:1.2 AS runtime
+FROM wlsdml1114/engui_base_128_blackwell:1.0 AS runtime
 
 # ---------------------------------------------------------------------------
 # Configuración de variables de entorno

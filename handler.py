@@ -1,6 +1,6 @@
 """
 RunPod Serverless handler multimodal para ComfyUI:
-- Mode "llm": Qwen3.5-4B Heretic Uncensored (CLIPLoader + TextGenerate)
+- Mode "llm": Qwen3.5-35B-A3B-Uncensored-FP8_BLOCK (CLIPLoader + TextGenerate)
 - Mode "tts": Fish Audio S2-Pro TTS
 - Mode "voice_clone": Fish Audio S2-Pro Voice Cloning
 - Debug utilities: convert_workflow, object_info, search_nodes
@@ -107,7 +107,8 @@ def _build_llm_workflow(job_input):
 
     if NODE_ID_SAMPLER_OPTS in wf:
         node_inputs = wf[NODE_ID_SAMPLER_OPTS]["inputs"]
-        node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 1024))
+        # Aumentamos max_length por defecto a 2048 para modelos MoE grandes
+        node_inputs["max_length"] = job_input.get("max_length", node_inputs.get("max_length", 2048))
         node_inputs["thinking"] = job_input.get("thinking", node_inputs.get("thinking", True))
         node_inputs["use_default_template"] = job_input.get(
             "use_default_template", node_inputs.get("use_default_template", True)
@@ -189,8 +190,6 @@ def _build_voice_clone_workflow(job_input):
     if not ref_text:
         detected_text, detected_lang = _transcribe_audio(filepath, language=language)
         ref_text = detected_text
-        # Si el usuario dejó language="auto", usamos el idioma detectado por Whisper
-        # para el TTS también (mejor que dejarlo en "auto" para Fish Audio).
         if language == "auto" and detected_lang:
             language = detected_lang
 
@@ -206,7 +205,7 @@ def _build_voice_clone_workflow(job_input):
             "inputs": {
                 "text": text,
                 "reference_audio": ["1", 0],
-                "reference_text": ref_text,  # Se pasa la transcripción de referencia
+                "reference_text": ref_text,
                 "model_path": "s2-pro",
                 "language": language,
                 "device": "auto",
@@ -306,7 +305,6 @@ def handler(job):
     if job_input.get("debug") == "convert_workflow":
         ui_workflow = None
 
-        # 1. Verificar si viene codificado en Base64
         if job_input.get("ui_workflow_b64"):
             try:
                 b64_bytes = job_input["ui_workflow_b64"].encode("utf-8")
@@ -315,11 +313,9 @@ def handler(job):
             except Exception as err:
                 return {"error": f"Error al decodificar ui_workflow_b64: {str(err)}"}
 
-        # 2. Si no viene en Base64, intentar obtener el JSON directo
         if not ui_workflow:
             ui_workflow = job_input.get("ui_workflow") or job_input.get("workflow")
 
-        # 3. Fallback: buscar el archivo local por defecto
         if not ui_workflow:
             ui_workflow_path = os.path.join(COMFYUI_PATH, "ui_workflow_source.json")
             if os.path.exists(ui_workflow_path):
@@ -328,7 +324,6 @@ def handler(job):
             else:
                 return {"error": "No se proporcionó 'ui_workflow_b64', 'ui_workflow' ni existe el archivo local por defecto."}
 
-        # 4. Enviar a ComfyUI para su conversión
         try:
             r = requests.post(f"{COMFY_URL}/workflow/convert", json=ui_workflow, timeout=60)
             r.raise_for_status()
@@ -391,8 +386,6 @@ def handler(job):
         elif mode == "voice_clone":
             if not job_input.get("text") or not job_input.get("reference_audio_b64"):
                 return {"error": "Faltan campos 'text' o 'reference_audio_b64' para mode='voice_clone'"}
-            # reference_text ahora es opcional: si no se envía, se transcribe
-            # automáticamente el audio de referencia con Whisper.
             wf = _build_voice_clone_workflow(job_input)
             prompt_id = _queue_prompt(wf)
             history = _poll_history(prompt_id)

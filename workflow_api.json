@@ -2,7 +2,7 @@
   "61": {
     "class_type": "CLIPLoader",
     "inputs": {
-      "clip_name": "qwen/qwen3.5_9b_uncensored.safetensors",
+      "clip_name": "qwen/qwen3.5_35b_fp8.safetensors",
       "type": "stable_diffusion",
       "device": "default"
     }

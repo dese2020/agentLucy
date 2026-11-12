@@ -35,15 +35,15 @@ RUN cd ${COMFYUI_PATH}/custom_nodes && \
 COPY ui_workflow_source.json ${COMFYUI_PATH}/ui_workflow_source.json
 
 # ---------------------------------------------------------------------------
-# Descarga y conversión de nDimensional/Qwen3.5-9B-Uncensored-Safetensors
+# Descarga y conversión de nDimensional/Qwen3.5-35B-A3B-Uncensored-FP8_BLOCK
 # a un único archivo .safetensors (compatibilidad directa con CLIPLoader)
 # ---------------------------------------------------------------------------
-ENV MODEL_REPO=nDimensional/Qwen3.5-9B-Uncensored-Safetensors
+ENV MODEL_REPO=nDimensional/Qwen3.5-35B-A3B-Uncensored-FP8_BLOCK
 ENV TEXT_ENCODERS_DIR=${COMFYUI_PATH}/models/text_encoders/qwen
 
 RUN mkdir -p ${TEXT_ENCODERS_DIR} && \
     hf download ${MODEL_REPO} --local-dir /tmp/qwen_dl --include "*.safetensors" && \
-    python3 -c 'import glob, os; from safetensors import safe_open; from safetensors.torch import save_file; shards = sorted(glob.glob("/tmp/qwen_dl/*.safetensors")); tensors = {k: f.get_tensor(k) for s in shards for f in [safe_open(s, framework="pt", device="cpu")] for k in f.keys()}; save_file(tensors, os.path.join(os.environ["TEXT_ENCODERS_DIR"], "qwen3.5_9b_uncensored.safetensors"))' && \
+    python3 -c 'import glob, os; from safetensors import safe_open; from safetensors.torch import save_file; shards = sorted(glob.glob("/tmp/qwen_dl/*.safetensors")); tensors = {k: f.get_tensor(k) for s in shards for f in [safe_open(s, framework="pt", device="cpu")] for k in f.keys()}; save_file(tensors, os.path.join(os.environ["TEXT_ENCODERS_DIR"], "qwen3.5_35b_fp8.safetensors"))' && \
     rm -rf /tmp/qwen_dl
 
 # ---------------------------------------------------------------------------
@@ -67,9 +67,6 @@ ENV WHISPER_CACHE_DIR=/opt/whisper_cache
 ENV WHISPER_DEVICE=cuda
 ENV WHISPER_COMPUTE_TYPE=float16
 
-# Nota: la descarga en build time se hace en 'cpu' porque el builder no tiene
-# GPU disponible. Los pesos son los mismos independientemente del device;
-# el runtime real usa cuda/float16 via las ENV de arriba (leidas en handler.py).
 RUN python3 -c "from faster_whisper import WhisperModel; import os; WhisperModel(os.environ['WHISPER_MODEL_SIZE'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_CACHE_DIR'])"
 
 ENV FISH_MODEL_REPO=fishaudio/s2-pro
